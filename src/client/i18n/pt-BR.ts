@@ -364,6 +364,7 @@ export const ptBR: Messages = {
     invalid_credentials: "E-mail ou senha incorretos.",
     invalid_app_key: "Essa chave não confere com o secret APP_KEY desta instalação.",
     app_key_missing: "Esta instalação não tem o secret APP_KEY (mín. 16 caracteres). Defina com wrangler secret put APP_KEY.",
+    app_key_placeholder: "O APP_KEY ainda é o valor de exemplo. Defina um segredo aleatório com wrangler secret put APP_KEY (ex.: openssl rand -base64 32).",
     setup_done: "A configuração já foi feita. Entre com sua conta.",
     invalid_email: "Informe um e-mail válido.",
     weak_password: "Use pelo menos 10 caracteres.",

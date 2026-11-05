@@ -9,6 +9,8 @@ import { iterationsOf } from "../env";
 export const auth = new Hono<AppEnv>();
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export const APP_KEY_PLACEHOLDER = "replace-with-a-long-random-secret";
+const DUMMY_PW = { pw_hash: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", pw_salt: "AAAAAAAAAAAAAAAAAAAAAA" };
 export const LOCALES = ["en", "pt-BR"] as const;
 const validLocale = (l: unknown) => (LOCALES as readonly string[]).includes(l as string) ? (l as string) : null;
 const validPassword = (p: unknown): p is string => typeof p === "string" && p.length >= 10 && p.length <= 200;
@@ -44,6 +46,7 @@ auth.post("/setup", async (c) => {
   const n = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM users`).first<number>("n");
   if (n) return fail(c, 409, "setup_done");
   if (!c.env.APP_KEY || c.env.APP_KEY.length < 16) return fail(c, 500, "app_key_missing");
+  if (c.env.APP_KEY.trim() === APP_KEY_PLACEHOLDER) return fail(c, 500, "app_key_placeholder");
   if (typeof b.appKey !== "string" || !(await safeEqual(b.appKey, c.env.APP_KEY))) return fail(c, 403, "invalid_app_key");
   const email = normEmail(b.email);
   if (!EMAIL_RE.test(email)) return fail(c, 400, "invalid_email");
@@ -62,7 +65,8 @@ auth.post("/login", async (c) => {
   if (await rateLimited(c, "login", email)) return fail(c, 429, "too_many_attempts");
   if (!email || typeof b.password !== "string" || b.password.length > 200) return fail(c, 401, "invalid_credentials");
   const user = await c.env.DB.prepare(`SELECT * FROM users WHERE email = ?1 AND disabled = 0`).bind(email).first<User>();
-  if (!user || !(await verifyPassword(b.password, user))) return fail(c, 401, "invalid_credentials");
+  const ok = await verifyPassword(b.password, user ?? { ...DUMMY_PW, pw_iter: iterationsOf(c.env) });
+  if (!user || !ok) return fail(c, 401, "invalid_credentials");
   await createSession(c, user.id);
   return c.json({ user: publicUser(user) });
 });
@@ -110,28 +114,32 @@ auth.post("/change-password", async (c) => {
 
 // ---------- Invites ----------
 
-async function findInvite(db: D1Database, code: string) {
-  if (!/^[A-Za-z0-9_-]{20,64}$/.test(code)) return null;
-  return db.prepare(`SELECT * FROM invites WHERE code_hash = ?1`).bind(await sha256(code))
+async function findInvite(db: D1Database, code: unknown) {
+  if (typeof code !== "string" || !/^[A-Za-z0-9_-]{20,64}$/.test(code)) return null;
+  return db.prepare(
+    `SELECT i.* FROM invites i JOIN users u ON u.id = i.created_by
+     WHERE i.code_hash = ?1 AND u.role = 'admin' AND u.disabled = 0`,
+  ).bind(await sha256(code))
     .first<{ code_hash: string; email: string; role: "admin" | "member"; site_tags: string; expires_at: string; used_at: string | null }>();
 }
 
-auth.get("/invite/:code", async (c) => {
+auth.post("/invite/info", async (c) => {
   if (await rateLimited(c, "invite")) return fail(c, 429, "too_many_attempts");
-  const inv = await findInvite(c.env.DB, c.req.param("code"));
+  const b = await body<{ code: string }>(c);
+  const inv = await findInvite(c.env.DB, b.code);
   if (!inv) return fail(c, 404, "invite_not_found");
   if (inv.used_at) return fail(c, 409, "invite_used");
   if (inv.expires_at < new Date().toISOString()) return fail(c, 409, "invite_expired");
   return c.json({ email: inv.email, role: inv.role });
 });
 
-auth.post("/invite/:code", async (c) => {
+auth.post("/invite/accept", async (c) => {
   if (await rateLimited(c, "invite")) return fail(c, 429, "too_many_attempts");
-  const inv = await findInvite(c.env.DB, c.req.param("code"));
+  const b = await body<{ code: string; name: string; password: string; locale: string }>(c);
+  const inv = await findInvite(c.env.DB, b.code);
   if (!inv) return fail(c, 404, "invite_not_found");
   if (inv.used_at) return fail(c, 409, "invite_used");
   if (inv.expires_at < new Date().toISOString()) return fail(c, 409, "invite_expired");
-  const b = await body<{ name: string; password: string; locale: string }>(c);
   if (!validPassword(b.password)) return fail(c, 400, "weak_password");
   const exists = await c.env.DB.prepare(`SELECT 1 FROM users WHERE email = ?1`).bind(inv.email).first();
   if (exists) return fail(c, 409, "email_taken");

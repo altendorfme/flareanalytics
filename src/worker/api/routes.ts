@@ -49,6 +49,9 @@ async function parseRange(c: Context<AppEnv>): Promise<Range | Response> {
 
 const sum = (sql: string) => `COALESCE(SUM(${sql}), 0)`;
 
+const limitOf = (v: string | undefined, fallback: number, max: number) =>
+  Math.min(Math.max(1, Math.trunc(Number(v ?? fallback)) || fallback), max);
+
 /** Last successful hourly collection (how far today's data goes). */
 async function lastCollection(db: D1Database): Promise<Date | null> {
   const t = await db.prepare(`SELECT MAX(ran_at) AS t FROM collector_runs WHERE job = 'hourly' AND status = 'ok'`).first<string>("t");
@@ -153,7 +156,7 @@ reads.get("/sites", async (c) => {
 reads.get("/overview", async (c) => {
   const r = await parseRange(c);
   if (r instanceof Response) return r;
-  const limit = Math.min(Number(c.req.query("limit") ?? 10) || 10, 50);
+  const limit = limitOf(c.req.query("limit"), 10, 50);
   const db = c.env.DB;
   const tz = timeZoneOf(c.env);
   const hourly = r.days <= 2;
@@ -281,7 +284,7 @@ reads.get("/top", async (c) => {
   if (r instanceof Response) return r;
   const dim = c.req.query("dim") as DimKey;
   if (!DIM_KEYS.includes(dim)) return fail(c, 400, "invalid_dim");
-  const limit = Math.min(Number(c.req.query("limit") ?? 100) || 100, 500);
+  const limit = limitOf(c.req.query("limit"), 100, 500);
   const { results } = await c.env.DB.prepare(
     `SELECT value, SUM(pageviews) AS pageviews, SUM(visits) AS visits FROM rum_daily_dim
      WHERE site_tag = ?1 AND dim = ?2 AND day BETWEEN ?3 AND ?4

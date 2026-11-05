@@ -21,6 +21,8 @@ const BLOCKED_UA = new RegExp(
 function withRobotsTag(res: Response): Response {
   const out = new Response(res.body, res);
   out.headers.set("X-Robots-Tag", ROBOTS_TAG);
+  out.headers.set("Content-Security-Policy", "frame-ancestors 'none'");
+  out.headers.set("X-Frame-Options", "DENY");
   return out;
 }
 

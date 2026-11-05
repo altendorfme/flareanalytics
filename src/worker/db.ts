@@ -16,7 +16,7 @@ const UPSERT_DIM = `INSERT INTO rum_daily_dim (site_tag, dim, day, value, pagevi
   ON CONFLICT (site_tag, dim, day, value) DO UPDATE SET pageviews = excluded.pageviews, visits = excluded.visits
   WHERE pageviews <> excluded.pageviews OR visits <> excluded.visits`;
 
-// On day close, drop values that fell out of the final top-N.
+// Drop values that fell out of the current top-N for that day (every run that collects tops).
 const PRUNE_DIM = `DELETE FROM rum_daily_dim WHERE site_tag = ?1 AND dim = ?2 AND day = ?3
   AND value NOT IN (SELECT value FROM json_each(?4))`;
 
@@ -33,7 +33,7 @@ const UPSERT_VITALS = `INSERT INTO rum_daily_vitals (site_tag, day, ${VITAL_COLS
   WHERE ${["lcp_total", "inp_total", "cls_total", "fcp_total", "ttfb_total", "lcp_p75", "inp_p75"]
     .map((c) => `${c} IS NOT excluded.${c}`).join(" OR ")}`;
 
-export function statementsFor(env: Env, r: SiteResult, day: string, final: boolean): D1PreparedStatement[] {
+export function statementsFor(env: Env, r: SiteResult, day: string, prune: boolean): D1PreparedStatement[] {
   const db = env.DB;
   const out: D1PreparedStatement[] = [];
   for (const h of r.hours) out.push(db.prepare(UPSERT_HOURLY).bind(r.site_tag, h.hour, h.pageviews, h.visits));
@@ -44,7 +44,7 @@ export function statementsFor(env: Env, r: SiteResult, day: string, final: boole
       for (const row of rows) {
         out.push(db.prepare(UPSERT_DIM).bind(r.site_tag, dim, day, row.value, row.pageviews, row.visits));
       }
-      if (final) out.push(db.prepare(PRUNE_DIM).bind(r.site_tag, dim, day, JSON.stringify(rows.map((x) => x.value))));
+      if (prune) out.push(db.prepare(PRUNE_DIM).bind(r.site_tag, dim, day, JSON.stringify(rows.map((x) => x.value))));
     }
   }
   if (r.vitals && r.vitals.lcp_total + r.vitals.fcp_total + r.vitals.ttfb_total > 0) {

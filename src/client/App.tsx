@@ -19,8 +19,8 @@ export function App() {
 
   if (!ready) return <div className={authPageCls}><Spinner /></div>;
 
-  const invite = match("/invite/:code", path);
-  if (invite) return <InvitePage code={invite.code} />;
+  const invite = path === "/invite" ? {} : match("/invite/:code", path);
+  if (invite) return <InvitePage legacyCode={invite.code} />;
 
   if (needsSetup) return path === "/setup" ? <SetupPage /> : <Redirect to="/setup" />;
   if (!me) return path === "/login" ? <LoginPage /> : <Redirect to="/login" />;

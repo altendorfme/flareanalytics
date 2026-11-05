@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { ApiError, get, post, type Me } from "./api";
+import { ApiError, post, type Me } from "./api";
 import { LOCALES, useI18n, type Locale } from "./i18n";
 import { navigate } from "./router";
 import { useSession } from "./session";
@@ -159,16 +159,37 @@ export function SetupPage() {
   );
 }
 
-export function InvitePage({ code }: { code: string }) {
+const INVITE_KEY = "fa_invite";
+
+/** Invite code from the fragment (or a legacy path), kept for reloads after the URL is cleaned. */
+function readInviteCode(legacyCode?: string) {
+  let code = legacyCode || "";
+  try { code = decodeURIComponent(location.hash.slice(1)) || code; } catch { /* malformed fragment */ }
+  try {
+    if (code) sessionStorage.setItem(INVITE_KEY, code);
+    return code || sessionStorage.getItem(INVITE_KEY) || "";
+  } catch { return code; }
+}
+
+export function InvitePage({ legacyCode }: { legacyCode?: string }) {
   const { t, te, locale } = useI18n();
   const { setMe } = useSession();
   const { error, setError, fail } = useFormError();
+  const [code] = useState(() => readInviteCode(legacyCode));
   const [invite, setInvite] = useState<{ email: string; role: "admin" | "member" } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    get<{ email: string; role: "admin" | "member" }>(`/api/auth/invite/${encodeURIComponent(code)}`)
+    if (location.pathname !== "/invite" || location.hash) {
+      history.replaceState(null, "", "/invite");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!code) { setLoadError(te("invite_not_found")); return; }
+    post<{ email: string; role: "admin" | "member" }>("/api/auth/invite/info", { code })
       .then(setInvite).catch((e) => setLoadError(te(e instanceof ApiError ? e.code : "generic")));
   }, [code, te]);
 
@@ -178,7 +199,8 @@ export function InvitePage({ code }: { code: string }) {
     if (f.get("password") !== f.get("confirm")) return setError(t("auth.mismatch"));
     setBusy(true); setError(null);
     try {
-      const r = await post<{ user: Me }>(`/api/auth/invite/${encodeURIComponent(code)}`, { name: f.get("name"), password: f.get("password"), locale });
+      const r = await post<{ user: Me }>("/api/auth/invite/accept", { code, name: f.get("name"), password: f.get("password"), locale });
+      try { sessionStorage.removeItem(INVITE_KEY); } catch { /* no storage */ }
       setMe(r.user);
       navigate("/", true);
     } catch (err) { fail(err); } finally { setBusy(false); }

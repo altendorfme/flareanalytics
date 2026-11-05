@@ -53,6 +53,7 @@ export function temporaryPassword(length = 16) {
 // ---------- Secrets: AES-GCM, key derived from APP_KEY via HKDF ----------
 
 async function aesKey(appKey: string) {
+  if (typeof appKey !== "string" || appKey.length < 16) throw new Error("APP_KEY missing or too short (min. 16 characters)");
   const base = await crypto.subtle.importKey("raw", enc.encode(appKey), "HKDF", false, ["deriveKey"]);
   return crypto.subtle.deriveKey(
     { name: "HKDF", hash: "SHA-256", salt: enc.encode("flareanalytics"), info: enc.encode("settings-encryption-v1") },

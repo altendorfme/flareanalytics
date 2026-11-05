@@ -65,7 +65,7 @@ admin.post("/invites", async (c) => {
         c.get("user")!.id, now.toISOString(), expires.toISOString()),
   ]);
   const origin = new URL(c.req.url).origin;
-  return c.json({ url: `${origin}/invite/${code}`, email, role, expiresAt: expires.toISOString() });
+  return c.json({ url: `${origin}/invite#${code}`, email, role, expiresAt: expires.toISOString() });
 });
 
 admin.delete("/invites/:id", async (c) => {
@@ -97,6 +97,9 @@ admin.patch("/users/:id", async (c) => {
       .bind(id, role, disabled, typeof b.name === "string" && b.name.trim() ? b.name.trim().slice(0, 80) : null),
   ];
   if (disabled) stmts.push(c.env.DB.prepare(`DELETE FROM sessions WHERE user_id = ?1`).bind(id));
+  if (role !== "admin" || disabled) {
+    stmts.push(c.env.DB.prepare(`DELETE FROM invites WHERE created_by = ?1 AND used_at IS NULL`).bind(id));
+  }
   if (b.sites !== undefined) {
     stmts.push(c.env.DB.prepare(`DELETE FROM user_sites WHERE user_id = ?1`).bind(id));
     for (const tag of validTags(b.sites)) {
@@ -131,6 +134,7 @@ admin.delete("/users/:id", async (c) => {
   await c.env.DB.batch([
     c.env.DB.prepare(`DELETE FROM sessions WHERE user_id = ?1`).bind(id),
     c.env.DB.prepare(`DELETE FROM user_sites WHERE user_id = ?1`).bind(id),
+    c.env.DB.prepare(`DELETE FROM invites WHERE created_by = ?1 AND used_at IS NULL`).bind(id),
     c.env.DB.prepare(`DELETE FROM users WHERE id = ?1`).bind(id),
   ]);
   return c.json({ ok: true });

@@ -67,8 +67,9 @@ export const loadUser: MiddlewareHandler<AppEnv> = async (c, next) => {
 /** CSRF guard: state-changing requests must be same-origin. */
 export const sameOrigin: MiddlewareHandler<AppEnv> = async (c, next) => {
   if (c.req.method !== "GET" && c.req.method !== "HEAD") {
-    const origin = c.req.header("origin");
-    if (!origin || new URL(origin).host !== new URL(c.req.url).host) return fail(c, 403, "bad_origin");
+    let same = false;
+    try { same = new URL(c.req.header("origin") ?? "").origin === new URL(c.req.url).origin; } catch { /* invalid */ }
+    if (!same) return fail(c, 403, "bad_origin");
   }
   await next();
 };

@@ -363,6 +363,7 @@ export const en = {
     invalid_credentials: "Email or password is incorrect.",
     invalid_app_key: "That app key doesn't match this deployment's APP_KEY secret.",
     app_key_missing: "This deployment has no APP_KEY secret (min. 16 characters). Set it with wrangler secret put APP_KEY.",
+    app_key_placeholder: "APP_KEY is still the example placeholder. Set a random secret with wrangler secret put APP_KEY (e.g. openssl rand -base64 32).",
     setup_done: "Setup is already complete. Sign in instead.",
     invalid_email: "Enter a valid email address.",
     weak_password: "Use at least 10 characters.",

@@ -74,7 +74,8 @@ export async function fetchSites(token: string, accountId: string, sites: Site[]
 
   const query = `{ viewer { accounts(filter:{accountTag:"${accountId}"}) { ${parts.join("\n")} } } }`;
   const data = await gql<any>(token, query);
-  const acc = data?.viewer?.accounts?.[0] ?? {};
+  const acc = data?.viewer?.accounts?.[0];
+  if (!acc) throw new Error(`GraphQL without data for account ${accountId}`);
 
   return sites.map((s, i) => {
     const t = acc[`s${i}_t`]?.[0];
