@@ -1,6 +1,13 @@
+import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Env } from "./env";
 import { api } from "./api/routes";
-import { runHourly, runMaintenance } from "./collector/jobs";
+import { collectGroup, runHourly, runMaintenance, type GroupJob } from "./collector/jobs";
+
+export class Collector extends WorkerEntrypoint<Env> {
+  group(job: GroupJob) {
+    return collectGroup(this.env, job);
+  }
+}
 
 /** Private dashboard: no indexing, no AI use. */
 const ROBOTS_TAG = "noindex, nofollow, noarchive, nosnippet, noimageindex, noai, noimageai";

@@ -1,3 +1,4 @@
+import { exports } from "cloudflare:workers";
 import { num, timeZoneOf, type Env } from "../env";
 import { logRun, runBatch, statementsFor, writesToday } from "../db";
 import { getCredentials, type CfCredentials } from "../settings";
@@ -45,24 +46,51 @@ export async function discoverSites(env: Env, creds?: CfCredentials | null): Pro
   return stmts.length;
 }
 
+/** One GraphQL query and one D1 batch: the unit of work that has to fit 10 ms of CPU. */
+export interface GroupJob { token: string; accountId: string; sites: Site[]; w: Window; day: string; prune: boolean }
+
+export async function collectGroup(env: Env, job: GroupJob): Promise<{ written: number; error?: string }> {
+  try {
+    const results = await fetchSites(job.token, job.accountId, job.sites, job.w);
+    return { written: await runBatch(env, results.flatMap((r) => statementsFor(env, r, job.day, job.prune))) };
+  } catch (e) {
+    return { written: 0, error: `${job.accountId}: ${String(e).slice(0, 300)}` };
+  }
+}
+
+interface CollectorStub { group(job: GroupJob): Promise<{ written: number; error?: string }> }
+
+const runGroup = (env: Env, job: GroupJob) => {
+  const stub = (exports as unknown as { Collector?: CollectorStub } | undefined)?.Collector;
+  return stub ? stub.group(job) : collectGroup(env, job);
+};
+
+/** Groups in flight at once; keeps wall time short without bursting the GraphQL API. */
+const PARALLEL_GROUPS = 3;
+
 /** Collects a period: one GraphQL query per group of same-account sites. */
 async function collect(env: Env, token: string, sites: Site[], w: Window, day: string, prune: boolean) {
   const perQuery = Math.max(1, num(env.SITES_PER_QUERY, 5));
   const byAccount = new Map<string, Site[]>();
   for (const s of sites) byAccount.set(s.account_id, [...(byAccount.get(s.account_id) ?? []), s]);
+  const jobs: GroupJob[] = [];
+  for (const [accountId, list] of byAccount) {
+    for (let i = 0; i < list.length; i += perQuery) jobs.push({ token, accountId, sites: list.slice(i, i + perQuery), w, day, prune });
+  }
 
   let written = 0;
   const errors: string[] = [];
-  for (const [accountId, list] of byAccount) {
-    for (let i = 0; i < list.length; i += perQuery) {
-      const group = list.slice(i, i + perQuery);
-      try {
-        const results = await fetchSites(token, accountId, group, w);
-        written += await runBatch(env, results.flatMap((r) => statementsFor(env, r, day, prune)));
-      } catch (e) {
-        errors.push(`${accountId}: ${String(e).slice(0, 300)}`);
+  for (let i = 0; i < jobs.length; i += PARALLEL_GROUPS) {
+    const batch = jobs.slice(i, i + PARALLEL_GROUPS);
+    const results = await Promise.allSettled(batch.map((job) => runGroup(env, job)));
+    results.forEach((r, k) => {
+      if (r.status === "fulfilled") {
+        written += r.value.written;
+        if (r.value.error) errors.push(r.value.error);
+      } else {
+        errors.push(`${batch[k].accountId}: ${String(r.reason).slice(0, 300)}`);
       }
-    }
+    });
   }
   return { written, errors, sites: sites.length };
 }

@@ -4,7 +4,8 @@ import { DIM_KEYS, type SiteResult } from "./collector/rum";
 // Upserts only rewrite changed rows (WHERE in DO UPDATE); unchanged rows don't count toward
 // the D1 Free quota of 100k writes/day.
 
-const UPSERT_HOURLY = `INSERT INTO rum_hourly (site_tag, hour, pageviews, visits) VALUES (?1, ?2, ?3, ?4)
+const UPSERT_HOURLY = `INSERT INTO rum_hourly (site_tag, hour, pageviews, visits)
+  SELECT ?1, j.value ->> 0, j.value ->> 1, j.value ->> 2 FROM json_each(?2) AS j WHERE true
   ON CONFLICT (site_tag, hour) DO UPDATE SET pageviews = excluded.pageviews, visits = excluded.visits
   WHERE pageviews <> excluded.pageviews OR visits <> excluded.visits`;
 
@@ -12,13 +13,14 @@ const UPSERT_DAILY = `INSERT INTO rum_daily (site_tag, day, pageviews, visits) V
   ON CONFLICT (site_tag, day) DO UPDATE SET pageviews = excluded.pageviews, visits = excluded.visits
   WHERE pageviews <> excluded.pageviews OR visits <> excluded.visits`;
 
-const UPSERT_DIM = `INSERT INTO rum_daily_dim (site_tag, dim, day, value, pageviews, visits) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+const UPSERT_DIMS = `INSERT INTO rum_daily_dim (site_tag, dim, day, value, pageviews, visits)
+  SELECT ?1, j.value ->> 0, ?2, j.value ->> 1, j.value ->> 2, j.value ->> 3 FROM json_each(?3) AS j WHERE true
   ON CONFLICT (site_tag, dim, day, value) DO UPDATE SET pageviews = excluded.pageviews, visits = excluded.visits
   WHERE pageviews <> excluded.pageviews OR visits <> excluded.visits`;
 
 // Drop values that fell out of the current top-N for that day (every run that collects tops).
-const PRUNE_DIM = `DELETE FROM rum_daily_dim WHERE site_tag = ?1 AND dim = ?2 AND day = ?3
-  AND value NOT IN (SELECT value FROM json_each(?4))`;
+const PRUNE_DIMS = `DELETE FROM rum_daily_dim WHERE site_tag = ?1 AND day = ?2
+  AND (dim, value) NOT IN (SELECT j.value ->> 0, j.value ->> 1 FROM json_each(?3) AS j)`;
 
 const VITAL_COLS = [
   "lcp_p75", "inp_p75", "cls_p75", "fcp_p75", "ttfb_p75",
@@ -36,16 +38,16 @@ const UPSERT_VITALS = `INSERT INTO rum_daily_vitals (site_tag, day, ${VITAL_COLS
 export function statementsFor(env: Env, r: SiteResult, day: string, prune: boolean): D1PreparedStatement[] {
   const db = env.DB;
   const out: D1PreparedStatement[] = [];
-  for (const h of r.hours) out.push(db.prepare(UPSERT_HOURLY).bind(r.site_tag, h.hour, h.pageviews, h.visits));
+  if (r.hours.length) {
+    out.push(db.prepare(UPSERT_HOURLY).bind(r.site_tag, JSON.stringify(r.hours.map((h) => [h.hour, h.pageviews, h.visits]))));
+  }
   out.push(db.prepare(UPSERT_DAILY).bind(r.site_tag, day, r.totals.pageviews, r.totals.visits));
   if (r.dims) {
-    for (const dim of DIM_KEYS) {
-      const rows = r.dims[dim];
-      for (const row of rows) {
-        out.push(db.prepare(UPSERT_DIM).bind(r.site_tag, dim, day, row.value, row.pageviews, row.visits));
-      }
-      if (prune) out.push(db.prepare(PRUNE_DIM).bind(r.site_tag, dim, day, JSON.stringify(rows.map((x) => x.value))));
-    }
+    const rows: [string, string, number, number][] = [];
+    for (const dim of DIM_KEYS) for (const x of r.dims[dim]) rows.push([dim, x.value, x.pageviews, x.visits]);
+    const json = JSON.stringify(rows);
+    if (rows.length) out.push(db.prepare(UPSERT_DIMS).bind(r.site_tag, day, json));
+    if (prune) out.push(db.prepare(PRUNE_DIMS).bind(r.site_tag, day, json));
   }
   if (r.vitals && r.vitals.lcp_total + r.vitals.fcp_total + r.vitals.ttfb_total > 0) {
     const v = r.vitals;
