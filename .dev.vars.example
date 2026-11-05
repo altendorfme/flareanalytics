@@ -1,0 +1,1 @@
+APP_KEY=replace-with-a-long-random-secret # openssl rand -base64 32
