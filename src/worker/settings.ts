@@ -5,13 +5,16 @@ import { TAG_RE } from "./collector/rum";
 
 export interface CfCredentials { token: string; accounts: string[] }
 
-async function getSetting(env: Env, key: string) {
+export async function getSetting(env: Env, key: string) {
   return env.DB.prepare(`SELECT value FROM settings WHERE key = ?1`).bind(key).first<string>("value");
 }
 
-const putSetting = (env: Env, key: string, value: string) =>
+export const putSetting = (env: Env, key: string, value: string) =>
   env.DB.prepare(`INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = excluded.value`)
     .bind(key, value);
+
+export const deleteSetting = (env: Env, key: string) =>
+  env.DB.prepare(`DELETE FROM settings WHERE key = ?1`).bind(key);
 
 /** Decrypted token and selected accounts, or null if Cloudflare isn't connected. */
 export async function getCredentials(env: Env): Promise<CfCredentials | null> {

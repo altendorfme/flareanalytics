@@ -311,7 +311,10 @@ export const en = {
     writes: "Rows written today: {used} of {budget}",
     estimate: "About {minutes} min for {days} days.",
     errors: "{day}: {message}",
-    keepOpen: "Keep this tab open while it runs.",
+    keepOpen: "Keep this tab open while it runs. Progress is saved, so if the tab closes you can resume from here.",
+    interrupted: "Import paused at {date}: {done} of {total} days done. Resume to continue from there.",
+    retrying: "No connection. Retrying in {seconds} s…",
+    discard: "Discard",
   },
   status: {
     budgetNote: "Past {budget} writes in a day, collection keeps only the totals and skips breakdowns, to stay within the Free plan’s 100,000.",
@@ -387,6 +390,9 @@ export const en = {
     invalid_range: "Invalid date range.",
     invalid_dim: "Invalid breakdown.",
     invalid_day: "Invalid day.",
+    invalid_days: "Choose between 1 and 184 days.",
+    no_backfill: "No import in progress.",
+    not_connected: "Connect Cloudflare before importing.",
     server_error: "The server hit an error. Try again in a moment.",
   },
 };

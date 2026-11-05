@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type R
 import { IconAlertTriangle } from "@tabler/icons-react";
 import { ApiError, del, get, patch, post, type SiteInfo } from "./api";
 import { useI18n, type MessageKey } from "./i18n";
-import { addDays, formatters, isTokenError, localToday, nextCollection, runErrors, STALE_MS } from "./format";
+import { formatters, isTokenError, nextCollection, runErrors, STALE_MS } from "./format";
 import { navigate, onLinkClick } from "./router";
 import { useSession } from "./session";
 import { useSites } from "./Shell";
@@ -453,87 +453,172 @@ function SitesSettings() {
 
 // ---------- Import history ----------
 
-interface BackfillResult { written: number; errors: string[]; totalSites: number; writesToday: number; writeBudget: number }
+interface BackfillJob { from: string; to: string; cursor: string; offset: number; total: number; startedAt: string; updatedAt: string }
+interface BackfillUsage { writesToday: number; writeBudget: number }
+interface BackfillStep extends BackfillUsage {
+  job: BackfillJob | null; day: string; written: number; errors: string[]; done: boolean; skipped?: string | boolean;
+}
+
+/** Days already imported: every day before the cursor. */
+const jobDone = (j: BackfillJob) =>
+  Math.max(0, Math.min(j.total, Math.round((Date.parse(j.cursor) - Date.parse(j.from)) / 86_400_000)));
+
+/** Network drops retry until back online; server errors give up after a few attempts. */
+const SERVER_RETRIES = 8;
+const retryable = (e: unknown) => e instanceof ApiError && (e.status === 0 || e.status === 429 || e.status >= 500);
+const backoffMs = (attempt: number) => Math.min(60_000, 2000 * 2 ** attempt);
 
 function HistoryImport() {
   const { t, locale } = useI18n();
-  const { timeZone, reload, sites } = useSites();
+  const { reload, sites } = useSites();
   const f = formatters(locale);
   const [days, setDays] = useState(90);
   // Draft value: clearing the field to type a new number must not snap to "1".
   const [daysDraft, setDaysDraft] = useState("90");
   const commitDays = () => {
     const n = Math.max(1, Math.min(184, Math.round(Number(daysDraft)) || 90));
-    setDays(n); setDaysDraft(String(n)); setState({ running: false, next: n, total: n });
+    setDays(n); setDaysDraft(String(n));
     return n;
   };
   // ~1.1 s pause + ~0.8 s collection per call; one call per 5 sites per day.
   const estimateMin = Math.max(1, Math.round((days * Math.max(1, Math.ceil(sites.length / 5)) * 1.9) / 60));
-  const [state, setState] = useState<{ running: boolean; next: number; total: number; day?: string; done?: "done" | "stopped" | "budget" }>({ running: false, next: days, total: days });
+  const [loaded, setLoaded] = useState(false);
+  const [job, setJob] = useState<BackfillJob | null>(null);
+  const [running, setRunning] = useState(false);
+  const [outcome, setOutcome] = useState<"done" | "stopped" | "budget" | null>(null);
+  const [retryIn, setRetryIn] = useState<number | null>(null);
   const [usage, setUsage] = useState<{ used: number; budget: number } | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
+  const [discarding, setDiscarding] = useState(false);
   const stop = useRef(false);
-  const { error, fail } = useError();
+  const wake = useRef<(() => void) | null>(null);
+  const { error, setError, fail } = useError();
 
-  const run = async (startAt: number, total: number) => {
+  useEffect(() => {
+    get<BackfillUsage & { job: BackfillJob | null }>("/api/admin/backfill")
+      .then((r) => { setJob(r.job); setUsage({ used: r.writesToday, budget: r.writeBudget }); })
+      .catch(fail)
+      .finally(() => setLoaded(true));
+  }, []);
+
+  useEffect(() => {
+    if (!running) return;
+    const onUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
+  }, [running]);
+
+  useEffect(() => {
+    const onOnline = () => wake.current?.();
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, []);
+
+  /** Waits ms with an on-screen countdown; Stop or coming back online ends it early. */
+  const wait = (ms: number) => new Promise<void>((resolve) => {
+    const end = Date.now() + ms;
+    const finish = () => { clearInterval(tick); wake.current = null; setRetryIn(null); resolve(); };
+    const tick = setInterval(() => {
+      if (stop.current || Date.now() >= end) finish();
+      else setRetryIn(Math.ceil((end - Date.now()) / 1000));
+    }, 250);
+    setRetryIn(Math.ceil(ms / 1000));
+    wake.current = finish;
+  });
+
+  const run = async (startDays?: number) => {
     stop.current = false;
-    setErrors([]);
-    const today = localToday(timeZone);
-    for (let i = startAt; i >= 1; i--) {
-      const day = addDays(today, -i);
-      setState({ running: true, next: i, total, day });
-      let offset = 0, totalSites = 1;
-      while (offset < totalSites) {
-        if (stop.current) { setState({ running: false, next: i, total, done: "stopped" }); return; }
+    setErrors([]); setError(null); setOutcome(null); setRunning(true);
+    const end = (o: "done" | "stopped" | "budget" | null) => { setRunning(false); setRetryIn(null); setOutcome(o); };
+    let attempt = 0;
+    if (startDays) {
+      for (;;) {
         try {
-          const r = await post<BackfillResult>(`/api/admin/backfill?day=${day}&offset=${offset}&limit=5`);
-          totalSites = r.totalSites;
-          setUsage({ used: r.writesToday, budget: r.writeBudget });
-          if (r.errors.length) setErrors((e) => [...e, ...r.errors.map((m) => t("history.errors", { day, message: m.slice(0, 160) }))].slice(-5));
-          if (r.writesToday > r.writeBudget * 0.9) { setState({ running: false, next: i, total, done: "budget" }); reload(); return; }
-        } catch (e) { fail(e); setState({ running: false, next: i, total, done: "stopped" }); return; }
-        offset += 5;
-        await new Promise((r) => setTimeout(r, 1100)); // GraphQL rate limit headroom.
+          const r = await post<BackfillUsage & { job: BackfillJob }>("/api/admin/backfill/start", { days: startDays });
+          setJob(r.job);
+          break;
+        } catch (e) {
+          if (retryable(e) && attempt < SERVER_RETRIES && !stop.current) { await wait(backoffMs(attempt++)); continue; }
+          fail(e); end(null); return;
+        }
       }
+      attempt = 0;
     }
-    setState({ running: false, next: 0, total, done: "done" });
-    reload();
+    for (;;) {
+      if (stop.current) { end("stopped"); return; }
+      try {
+        const r = await post<BackfillStep>("/api/admin/backfill/step");
+        attempt = 0;
+        setUsage({ used: r.writesToday, budget: r.writeBudget });
+        if (r.skipped === "not_connected") { setError(t("errors.not_connected")); end(null); return; }
+        if (r.errors.length) setErrors((e) => [...e, ...r.errors.map((m) => t("history.errors", { day: r.day, message: m.slice(0, 160) }))].slice(-5));
+        if (r.done) { setJob(null); end("done"); reload(); return; }
+        setJob(r.job);
+        if (r.skipped || r.writesToday > r.writeBudget * 0.9) { end("budget"); reload(); return; }
+      } catch (e) {
+        if (e instanceof ApiError && e.code === "no_backfill") { setJob(null); end(null); return; }
+        const offline = e instanceof ApiError && e.status === 0;
+        if (retryable(e) && (offline || attempt < SERVER_RETRIES)) { await wait(backoffMs(attempt++)); continue; }
+        fail(e); end("stopped"); return;
+      }
+      await new Promise((r) => setTimeout(r, 1100)); // GraphQL rate limit headroom.
+    }
   };
 
-  const doneCount = state.total - state.next;
+  const discard = async () => {
+    setDiscarding(true);
+    try { await del("/api/admin/backfill"); setJob(null); setOutcome(null); setErrors([]); }
+    catch (e) { fail(e); } finally { setDiscarding(false); }
+  };
+
+  if (!loaded) return <section className={narrowPanelCls}><Spinner /></section>;
+
+  const total = job?.total ?? days;
+  const doneCount = job ? jobDone(job) : outcome === "done" ? total : 0;
   return (
     <section className={narrowPanelCls}>
       <p>{t("history.lead")}</p>
       {error && <Notice tone="error">{error}</Notice>}
-      {!state.running && state.done !== "budget" && state.next > 0 && state.next === state.total && (
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="days" className={labelCls}>{t("history.days")}</label>
-            <input id="days" type="number" inputMode="numeric" className={inputCls} min={1} max={184} value={daysDraft}
-              onChange={(e) => setDaysDraft(e.target.value)} onBlur={commitDays} />
+      {!running && !job && (
+        <>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="days" className={labelCls}>{t("history.days")}</label>
+              <input id="days" type="number" inputMode="numeric" className={inputCls} min={1} max={184} value={daysDraft}
+                onChange={(e) => setDaysDraft(e.target.value)} onBlur={commitDays} />
+            </div>
+            <Button variant="primary" onClick={() => { void run(commitDays()); }}>{t("history.start")}</Button>
           </div>
-          <Button variant="primary" onClick={() => { const n = commitDays(); void run(n, n); }}>{t("history.start")}</Button>
-        </div>
+          <p className="text-muted">{t("history.estimate", { minutes: estimateMin, days })}</p>
+        </>
       )}
-      {!state.running && state.next === state.total && <p className="text-muted">{t("history.estimate", { minutes: estimateMin, days })}</p>}
-      {(state.running || doneCount > 0) && (
+      {(running || job || outcome === "done") && (
         <div className={stackCls}>
-          <div className={progressCls} role="progressbar" aria-valuemin={0} aria-valuemax={state.total} aria-valuenow={doneCount}
-            aria-label={t("history.progress", { done: doneCount, total: state.total })}>
-            <span className={progressBarCls} style={{ transform: `scaleX(${doneCount / Math.max(state.total, 1)})` }} />
+          {!running && job && outcome === null && (
+            <Notice tone="warning">{t("history.interrupted", { date: f.date(job.cursor), done: doneCount, total })}</Notice>
+          )}
+          <div className={progressCls} role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={doneCount}
+            aria-label={t("history.progress", { done: doneCount, total })}>
+            <span className={progressBarCls} style={{ transform: `scaleX(${doneCount / Math.max(total, 1)})` }} />
           </div>
           <p aria-live="polite">
-            {state.running && state.day ? t("history.running", { day: f.date(state.day) }) : null}
-            {" "}{t("history.progress", { done: doneCount, total: state.total })}
+            {running && retryIn != null ? t("history.retrying", { seconds: retryIn })
+              : running && job ? t("history.running", { day: f.date(job.cursor) }) : null}
+            {" "}{t("history.progress", { done: doneCount, total })}
           </p>
-          {state.running && <p className="text-muted">{t("history.keepOpen")}</p>}
-          {state.done === "done" && <Notice tone="success">{t("history.done")}</Notice>}
-          {state.done === "stopped" && <Notice tone="warning">{t("history.stopped")}</Notice>}
-          {state.done === "budget" && <Notice tone="warning">{t("history.budgetStop")}</Notice>}
+          {running && <p className="text-muted">{t("history.keepOpen")}</p>}
+          {outcome === "done" && <Notice tone="success">{t("history.done")}</Notice>}
+          {outcome === "stopped" && <Notice tone="warning">{t("history.stopped")}</Notice>}
+          {outcome === "budget" && <Notice tone="warning">{t("history.budgetStop")}</Notice>}
           <div className={rowCls}>
-            {state.running
-              ? <Button onClick={() => { stop.current = true; }}>{t("history.stop")}</Button>
-              : state.next > 0 && <Button variant="primary" onClick={() => run(state.next, state.total)}>{t("history.resume")}</Button>}
+            {running
+              ? <Button onClick={() => { stop.current = true; wake.current?.(); }}>{t("history.stop")}</Button>
+              : job && (
+                <>
+                  <Button variant="primary" onClick={() => { void run(); }}>{t("history.resume")}</Button>
+                  <Button busy={discarding} onClick={discard}>{t("history.discard")}</Button>
+                </>
+              )}
           </div>
         </div>
       )}

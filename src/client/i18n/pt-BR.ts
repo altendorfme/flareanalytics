@@ -312,7 +312,10 @@ export const ptBR: Messages = {
     writes: "Linhas escritas hoje: {used} de {budget}",
     estimate: "Cerca de {minutes} min para {days} dias.",
     errors: "{day}: {message}",
-    keepOpen: "Mantenha esta aba aberta enquanto importa.",
+    keepOpen: "Mantenha esta aba aberta enquanto importa. O progresso fica salvo: se a aba fechar, dá para continuar daqui.",
+    interrupted: "Importação pausada em {date}: {done} de {total} dias feitos. Continue para seguir de onde parou.",
+    retrying: "Sem conexão. Tentando de novo em {seconds} s…",
+    discard: "Descartar",
   },
   status: {
     budgetNote: "Acima de {budget} escritas no dia, a coleta guarda só os totais e pula os detalhamentos, para ficar dentro das 100.000 do plano Free.",
@@ -388,6 +391,9 @@ export const ptBR: Messages = {
     invalid_range: "Período inválido.",
     invalid_dim: "Detalhamento inválido.",
     invalid_day: "Dia inválido.",
+    invalid_days: "Escolha entre 1 e 184 dias.",
+    no_backfill: "Nenhuma importação em andamento.",
+    not_connected: "Conecte a Cloudflare antes de importar.",
     server_error: "O servidor encontrou um erro. Tente de novo em instantes.",
   },
 };

@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 import { hashPassword, randomToken, sha256, temporaryPassword } from "../auth/crypto";
 import { fail, type AppEnv } from "../auth/session";
-import { clearCredentials, getAccounts, getCredentials, saveCredentials, verifyToken } from "../settings";
+import { clearCredentials, deleteSetting, getAccounts, getCredentials, getSetting, putSetting, saveCredentials, verifyToken } from "../settings";
 import { collectDay, discoverSites, runHourly, runMaintenance } from "../collector/jobs";
 import { TAG_RE } from "../collector/rum";
 import { writesToday } from "../db";
-import { iterationsOf, num } from "../env";
-import { isDay } from "../time";
+import { iterationsOf, num, timeZoneOf } from "../env";
+import { addDays, isDay, localDay } from "../time";
 import { normEmail } from "./auth";
 
 export const admin = new Hono<AppEnv>();
@@ -211,14 +211,59 @@ admin.post("/discover", async (c) => c.json({ upserts: await discoverSites(c.env
 admin.post("/run/hourly", async (c) => c.json(await runHourly(c.env)));
 admin.post("/run/maintenance", async (c) => c.json(await runMaintenance(c.env)));
 
-/** Backfills one day, one slice of sites per call (fits the Free plan's 10 ms CPU). */
-admin.post("/backfill", async (c) => {
-  const day = c.req.query("day");
-  if (!isDay(day)) return fail(c, 400, "invalid_day");
-  const offset = Math.max(0, Number(c.req.query("offset") ?? 0) || 0);
-  const limit = Math.min(Math.max(1, Number(c.req.query("limit") ?? 5) || 5), 50);
-  const res = await collectDay(c.env, day, new Date(), { offset, limit });
-  return c.json({ ...res, writesToday: await writesToday(c.env), writeBudget: num(c.env.DAILY_WRITE_BUDGET, 80_000) });
+// ---------- History import ----------
+
+const JOB_KEY = "backfill_job";
+const SLICE = 5;
+
+interface BackfillJob { from: string; to: string; cursor: string; offset: number; total: number; startedAt: string; updatedAt: string }
+
+async function loadJob(env: AppEnv["Bindings"]): Promise<BackfillJob | null> {
+  const v = await getSetting(env, JOB_KEY);
+  if (!v) return null;
+  try { return JSON.parse(v) as BackfillJob; } catch { return null; }
+}
+
+const usage = async (env: AppEnv["Bindings"]) => ({
+  writesToday: await writesToday(env),
+  writeBudget: num(env.DAILY_WRITE_BUDGET, 80_000),
+});
+
+admin.get("/backfill", async (c) => c.json({ job: await loadJob(c.env), ...(await usage(c.env)) }));
+
+admin.post("/backfill/start", async (c) => {
+  const b = await body<{ days: number }>(c);
+  const days = Math.round(Number(b.days));
+  if (!Number.isFinite(days) || days < 1 || days > 184) return fail(c, 400, "invalid_days");
+  const today = localDay(new Date(), timeZoneOf(c.env));
+  const now = new Date().toISOString();
+  const job: BackfillJob = {
+    from: addDays(today, -days), to: addDays(today, -1), cursor: addDays(today, -days), offset: 0,
+    total: days, startedAt: now, updatedAt: now,
+  };
+  await putSetting(c.env, JOB_KEY, JSON.stringify(job)).run();
+  return c.json({ job, ...(await usage(c.env)) });
+});
+
+admin.post("/backfill/step", async (c) => {
+  const job = await loadJob(c.env);
+  if (!job) return fail(c, 404, "no_backfill");
+  const day = job.cursor;
+  const res = await collectDay(c.env, day, new Date(), { offset: job.offset, limit: SLICE });
+  if ("skipped" in res && res.skipped) {
+    return c.json({ job, day, written: 0, errors: res.errors ?? [], done: false, skipped: (res as any).reason ?? true, ...(await usage(c.env)) });
+  }
+  job.offset += SLICE;
+  if (job.offset >= res.totalSites) { job.cursor = addDays(day, 1); job.offset = 0; }
+  job.updatedAt = new Date().toISOString();
+  const done = job.cursor > job.to;
+  await (done ? deleteSetting(c.env, JOB_KEY) : putSetting(c.env, JOB_KEY, JSON.stringify(job))).run();
+  return c.json({ job: done ? null : job, day, written: res.written, errors: res.errors, done, ...(await usage(c.env)) });
+});
+
+admin.delete("/backfill", async (c) => {
+  await deleteSetting(c.env, JOB_KEY).run();
+  return c.json({ ok: true });
 });
 
 admin.get("/status", async (c) => {
