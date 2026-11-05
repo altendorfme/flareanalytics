@@ -655,7 +655,12 @@ function CollectionHealth({ data, when, runNow }: { data: StatusData; when: (iso
   );
 
   if (!data.connected) return <Notice tone="warning"><p>{t("status.health.notConnected")}</p>{cfLink("connect")}</Notice>;
-  if (!data.lastAttempt) return <Notice tone="info"><p>{t("status.health.noRuns")}</p>{runNow}</Notice>;
+  if (!data.lastAttempt) {
+    const msg = data.rows.daily > 0
+      ? t("status.health.imported", { time: f.clock(nextCollection(), timeZone) })
+      : t("status.health.noRuns");
+    return <Notice tone="info"><p>{msg}</p>{runNow}</Notice>;
+  }
 
   const now = Date.now();
   const latest = data.runs.find((r) => r.job === "hourly");

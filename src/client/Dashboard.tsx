@@ -75,9 +75,17 @@ const freshCls = "mt-1 flex items-center gap-2 text-sm text-muted";
 export function Freshness() {
   const { t, locale } = useI18n();
   const { me } = useSession();
-  const { lastRun, timeZone } = useSites();
+  const { lastRun, timeZone, sites } = useSites();
   const f = formatters(locale);
-  if (!lastRun) return <p className={freshCls}><span className="size-2 rounded-full bg-border-strong" aria-hidden="true" />{t("dashboard.neverCollected")}</p>;
+  if (!lastRun) {
+    const key = sites.some((s) => s.first_day) ? "dashboard.importedWaiting" : "dashboard.neverCollected";
+    return (
+      <p className={freshCls}>
+        <span className="size-2 rounded-full bg-border-strong" aria-hidden="true" />
+        {t(key, { time: f.clock(nextCollection(), timeZone) })}
+      </p>
+    );
+  }
   const last = new Date(lastRun);
   const stale = Date.now() - last.getTime() > STALE_MS;
   if (stale) {

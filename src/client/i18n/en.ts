@@ -92,7 +92,8 @@ export const en = {
   dashboard: {
     updated: "Updated {time}",
     nextCollection: "next collection {time}",
-    neverCollected: "Waiting for the first collection",
+    neverCollected: "Waiting for the first collection · {time}",
+    importedWaiting: "History imported · next collection {time}",
     updatedOn: "Updated {date}, {time}",
     stale: "Collection is late: last run {ago}.",
     staleMember: "Cloudflare keeps the data for about 6 months, so it can still be brought in once collection resumes. Let your admin know.",
@@ -347,6 +348,7 @@ export const en = {
       ok: "Collection is up to date. Last run {time} · next {next}.",
       stale: "Last successful collection {ago} ({when}).",
       neverSucceeded: "No collection has succeeded yet.",
+      imported: "History imported. The hourly collection hasn't run yet; the first one is at {time}. You can run it now.",
       cronIdle: "Nothing has run since then: the Worker's cron isn't firing.",
       cronCheck: "On Cloudflare, check that the Worker's triggers include these crons (a new deploy restores them from wrangler.jsonc):",
       failing: "The collector is running, but the latest run failed {ago}.",

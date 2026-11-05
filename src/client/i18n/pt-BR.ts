@@ -93,7 +93,8 @@ export const ptBR: Messages = {
   dashboard: {
     updated: "Atualizado às {time}",
     nextCollection: "próxima coleta às {time}",
-    neverCollected: "Aguardando a primeira coleta",
+    neverCollected: "Aguardando a primeira coleta · às {time}",
+    importedWaiting: "Histórico importado · próxima coleta às {time}",
     updatedOn: "Atualizado em {date}, {time}",
     stale: "Coleta atrasada: última {ago}.",
     staleMember: "A Cloudflare guarda os dados por cerca de 6 meses, então eles ainda podem ser trazidos quando a coleta voltar. Avise o admin.",
@@ -348,6 +349,7 @@ export const ptBR: Messages = {
       ok: "Coleta em dia. Última às {time} · próxima às {next}.",
       stale: "Última coleta bem-sucedida {ago} ({when}).",
       neverSucceeded: "Nenhuma coleta deu certo ainda.",
+      imported: "Histórico importado. A coleta horária ainda não rodou; a primeira é às {time}. Você pode rodá-la agora.",
       cronIdle: "Nada rodou desde então: o cron do Worker não está disparando.",
       cronCheck: "Na Cloudflare, confira se os gatilhos do Worker têm estes crons (um novo deploy os recria a partir do wrangler.jsonc):",
       failing: "O coletor está rodando, mas a última execução falhou {ago}.",
