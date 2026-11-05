@@ -25,7 +25,7 @@ git clone https://github.com/butialabs/flareanalytics.git
 cd flareanalytics
 npm install
 npx wrangler login
-npx wrangler d1 create flareanalytics  # put the database_id in wrangler.jsonc
+npx wrangler d1 create flareanalytics  # no need to copy the id: wrangler finds it by name
 npx wrangler secret put APP_KEY        # e.g. openssl rand -base64 32
 npm run deploy                         # build, migrate, deploy
 ```
