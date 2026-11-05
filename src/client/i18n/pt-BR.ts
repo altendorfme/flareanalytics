@@ -321,7 +321,6 @@ export const ptBR: Messages = {
   status: {
     budgetNote: "Acima de {budget} escritas no dia, a coleta guarda só os totais e pula os detalhamentos, para ficar dentro das 100.000 do plano Free.",
     noRunSince: "Nada rodou desde {time}",
-    lead: "O que o coletor buscou recentemente:",
     runNow: "Coletar dados agora",
     runMaintenance: "Fazer manutenção diária agora",
     ran: "Feito.",

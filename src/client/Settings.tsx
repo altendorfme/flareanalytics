@@ -780,7 +780,7 @@ function Status() {
           <h2 id="limits-title" className={panelTitleCls}>{t("status.limits")}</h2>
           <Meter id="writes-label" label={t("history.writes", { used: f.full(data.writesToday), budget: f.full(data.writeBudget) })}
             used={data.writesToday} max={data.writeBudget} pct={f.pct} />
-          <p className="-mt-1.5 max-w-[68ch] text-sm text-muted">{t("status.budgetNote", { budget: f.full(data.writeBudget) })}</p>
+          <p className="-mt-1.5 text-sm text-muted">{t("status.budgetNote", { budget: f.full(data.writeBudget) })}</p>
           {data.dbBytes != null && (
             <Meter id="db-label" label={t("status.dbSize", { used: mb.format(data.dbBytes / 1e6), limit: mb.format(data.dbLimit / 1e6) })}
               used={data.dbBytes} max={data.dbLimit} pct={f.pct} />
@@ -794,7 +794,6 @@ function Status() {
       <section className={cn(panelCls, stackCls)} aria-labelledby="runs-title">
         <header>
           <h2 id="runs-title" className={panelTitleCls}>{t("status.runsTitle")}</h2>
-          <p className="text-sm text-muted">{t("status.lead")}</p>
         </header>
         {data.runs.length === 0 ? <p className={emptyCls}>{t("status.noRuns")}</p> : (
           <div className="relative overflow-x-auto">

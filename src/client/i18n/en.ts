@@ -320,7 +320,6 @@ export const en = {
   status: {
     budgetNote: "Past {budget} writes in a day, collection keeps only the totals and skips breakdowns, to stay within the Free plan’s 100,000.",
     noRunSince: "Nothing has run since {time}",
-    lead: "What the collector fetched recently:",
     runNow: "Collect data now",
     runMaintenance: "Run daily maintenance now",
     ran: "Done.",
